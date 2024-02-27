@@ -22,7 +22,16 @@ function post_json(string $url, array $data): array {
     return json_decode($response, true);
 }
 
-function get_article_for_term(string $term): string {
+function fetch_from_db_or_generate(string $term): string {
+    $db = pg_connect("postgres://wikipedai:wikipedai@localhost:5432/wikipedai")
+        or die("database connection failed: " . pg_last_error($db));
+
+    $result = pg_query_params($db, 'SELECT article.content FROM article WHERE article.term = $1', array($term)) or die("database query failed: " . pg_last_error($db));
+
+    if ($cached = pg_fetch_result($result, NULL, field: "content")) {
+        return $cached;
+    }
+
     // TODO: improve the prompt
     $response = post_json('http://localhost:11434/api/generate', array(
         'model' => 'mistral',
@@ -31,9 +40,18 @@ function get_article_for_term(string $term): string {
         'stream' => false,
     ));
 
-    // TODO: cache this content in the database
     $content = $response['response'];
 
+    pg_query_params($db, 'INSERT INTO article(term, content) VALUES ($1, $2)', array($term, $content));
+
+    pg_free_result($result);
+    pg_close($db);
+
+    return $content;
+}
+
+function get_article_for_term(string $term): string {
+    $content = fetch_from_db_or_generate($term);
 
     // wrap every word in a link to itself as a search term
     $with_links = preg_replace('/(\w+)/', '<a href="/?term=$1">$1</a>', $content);
@@ -100,7 +118,7 @@ function get_article_for_term(string $term): string {
                 $term = $_GET['term'];
                 echo("<h1>$term</h1>" . get_article_for_term($term));
             } else {
-                echo("You are on the homepage, search the wiki using the search bar (top)");
+                echo("You are on the homepage, search the wiki using the search bar (TODO: Random Article)");
             }
             ?>
         </main>
