@@ -1,6 +1,8 @@
 <?php
 require __DIR__ . '/vendor/autoload.php';
 
+$connection_string = "postgres://wikipedai:wikipedai@localhost:5432/wikipedai";
+
 function post_json(string $url, array $data): array {
     $curl = curl_init($url);
     curl_setopt($curl, CURLOPT_HEADER, false);
@@ -23,7 +25,8 @@ function post_json(string $url, array $data): array {
 }
 
 function fetch_from_db_or_generate(string $term): string {
-    $db = pg_connect("postgres://wikipedai:wikipedai@localhost:5432/wikipedai")
+    global $connection_string;
+    $db = pg_connect($connection_string)
         or die("database connection failed: " . pg_last_error($db));
 
     $result = pg_query_params($db, 'SELECT article.content FROM article WHERE article.term = $1', array($term)) or die("database query failed: " . pg_last_error($db));
@@ -65,6 +68,25 @@ function get_article_for_term(string $term): string {
     $escaped = htmlspecialchars($with_links);
     return $article . "<br><details><summary>Source</summary><pre>$escaped</pre></details>";
 }
+
+function get_random_term(): string | null {
+    global $connection_string;
+    $db = pg_connect($connection_string)
+        or die("database connection failed: " . pg_last_error($db));
+
+    // TODO: improve performance
+    $result = pg_query($db, 'SELECT article.term FROM article ORDER BY RANDOM() LIMIT 1')
+        or die("database query failed: " . pg_last_error($db));
+
+    $random = pg_fetch_result($result, NULL, field: "term")
+        or null;
+
+    pg_free_result($result);
+    pg_close($db);
+
+    return $random;
+}
+
 ?>
 <html>
     <head>
@@ -95,10 +117,6 @@ function get_article_for_term(string $term): string {
         p, h1, h2, h3, h4, h5, h6 {
             overflow-wrap: break-word;
         }
-
-        #root, #__next {
-            isolation: isolate;
-        }
         </style>
     </head>
 
@@ -118,7 +136,13 @@ function get_article_for_term(string $term): string {
                 $term = $_GET['term'];
                 echo("<h1>$term</h1>" . get_article_for_term($term));
             } else {
-                echo("You are on the homepage, search the wiki using the search bar (TODO: Random Article)");
+                $random = get_random_term();
+                echo('You are on the homepage, search the wiki using the search bar'); 
+                if ($random != null) {
+                    echo(" or visit a <a href=\"?term=$random\">random article</a>");
+                } else {
+                    echo('.');
+                }
             }
             ?>
         </main>
